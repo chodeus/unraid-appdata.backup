@@ -20,6 +20,9 @@ class ABHelper {
     /** A container archive's extension; the rest of the file name is the container's name */
     const ARCHIVE_PATTERN = '/\.tar(\.gz|\.zst)?$/';
 
+    /** The levels that end the script; @ cannot silence them */
+    const FATAL_ERRORS = E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR;
+
     /**
      * @var array Store some temporary data about containers, which should skipped during start routine
      */
@@ -40,6 +43,9 @@ class ABHelper {
 
     /** @var resource|null The run lock from claimRun(): the kernel drops it when this process ends, however it ends */
     private static $runLock = null;
+
+    /** Containers this run stopped (an unreadable state counts) and has not started again, as name => true, for reportCrash() */
+    private static array $stoppedByRun = [];
 
     /**
      * Logs a message to the system log
@@ -175,7 +181,7 @@ class ABHelper {
     /**
      * Stops a container
      * @param $container array
-     * @return bool false if the container is still running after the stop attempts
+     * @return bool false if it is not backed up; it then decides whether it gets started again
      */
     public static function stopContainer($container) {
         global $dockerClient, $abSettings;
@@ -187,6 +193,7 @@ class ABHelper {
         $container = $dockerClient->getContainerDetails($name);
         if (!is_bool($container['State']['Running'] ?? null)) {
             self::backupLog("The state of '$name' cannot be read, so it is not backed up!", self::LOGLEVEL_ERR);
+            self::$skipStartContainers[] = $name;
             self::$errorOccured = true;
             return false;
         }
@@ -205,8 +212,15 @@ class ABHelper {
                 return true;
             }
 
-            if (!self::stopRunning($container['Name'])) {
-                self::backupLog("'{$container['Name']}' did not stop (its state is running or unreadable), so it is not backed up!", self::LOGLEVEL_ERR);
+            $stopped = self::stopRunning($container['Name']);
+            if ($stopped === null) {
+                self::backupLog("The state of '{$container['Name']}' cannot be read after the stop, so it is not backed up! It will be started again.", self::LOGLEVEL_ERR);
+                self::$errorOccured = true;
+                return false;
+            }
+            if (!$stopped) {
+                self::backupLog("'{$container['Name']}' did not stop, so it is not backed up!", self::LOGLEVEL_ERR);
+                self::$skipStartContainers[] = $container['Name'];
                 self::$errorOccured = true;
                 return false;
             }
@@ -223,7 +237,7 @@ class ABHelper {
 
     /**
      * Stops a running container, with 'docker stop' as the fallback; also used by the restore
-     * @return bool true once a fresh state read says it is stopped
+     * @return bool|null true once a fresh state read says it is stopped, false while it still runs, null when that read fails
      */
     public static function stopRunning($name) {
         global $dockerClient;
@@ -245,8 +259,12 @@ class ABHelper {
             self::backupLog("done! (took " . (time() - $stopTimer) . " seconds)", self::LOGLEVEL_INFO, true, true);
         }
 
-        // Either stop method can report wrongly, so a fresh state read decides; an unreadable state counts as running
-        return ($dockerClient->getContainerDetails($name)['State']['Running'] ?? null) === false;
+        // Either stop method can report wrongly, so a fresh state read decides
+        $running = $dockerClient->getContainerDetails($name)['State']['Running'] ?? null;
+        if ($running !== true) {
+            self::$stoppedByRun[$name] = true;
+        }
+        return is_bool($running) ? !$running : null;
     }
 
     /**
@@ -320,6 +338,9 @@ class ABHelper {
                 $dockerContainerStarted = true;
             }
         } while (!$dockerContainerStarted);
+        if ($dockerContainerStarted) {
+            unset(self::$stoppedByRun[$container['Name']]); // before the delay, so a crash in it does not list a started container
+        }
         if ($delay) {
             self::backupLog("The container has a delay set, waiting $delay seconds before carrying on");
             sleep($delay);
@@ -711,6 +732,7 @@ class ABHelper {
             sleep(30);
         }
         self::$runLock = $lock;
+        register_shutdown_function([self::class, 'reportCrash']);
         if (file_exists(ABSettings::$tempFolder . '/' . ABSettings::$stateFileAbort)) {
             unlink(ABSettings::$tempFolder . '/' . ABSettings::$stateFileAbort);
         }
@@ -752,7 +774,6 @@ class ABHelper {
 
     /**
      * @return bool
-     * @todo: register_shutdown_function? in beiden Scripts? Damit kill und goto :end?
      */
     public static function abortRequested() {
         return file_exists(ABSettings::$tempFolder . '/' . ABSettings::$stateFileAbort);
@@ -897,7 +918,7 @@ class ABHelper {
 
     public static function errorHandler(int $errno, string $errstr, string $errfile, int $errline, array $errcontext = []): bool {
         // @ leaves only fatal levels in error_reporting(). Unraid's php.ini leaves out E_WARNING, so never test $errno against it.
-        if ((error_reporting() & ~(E_ERROR | E_PARSE | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR)) === 0) {
+        if ((error_reporting() & ~self::FATAL_ERRORS) === 0) {
             return false;
         }
         $errStr = "got PHP error: $errno / $errstr $errfile:$errline with context: " . json_encode($errcontext);
@@ -905,6 +926,17 @@ class ABHelper {
         self::backupLog("PHP-ERROR occurred! $errno / $errstr $errfile:$errline", self::LOGLEVEL_DEBUG);
 
         return true;
+    }
+
+    /** Shutdown function from claimRun(): a fatal error skips the scripts' own ending, so the run reports it here */
+    public static function reportCrash() {
+        $error = error_get_last();
+        if (!$error || !($error['type'] & self::FATAL_ERRORS)) {
+            return; // error_get_last() also holds a warning left by @
+        }
+        $stopped = self::$stoppedByRun ? ' Still stopped by this run: ' . implode(', ', array_keys(self::$stoppedByRun)) . '.' : '';
+        self::backupLog("The run crashed with a PHP error: " . strtok($error['message'], "\n") . '.' . $stopped, self::LOGLEVEL_ERR);
+        self::backupLog(self::dump('PHP error', $error), self::LOGLEVEL_DEBUG);
     }
 
     /** Installs the update planned for $name, unless its backup just failed: then there would be no fresh backup to go back to */
@@ -992,8 +1024,7 @@ class ABHelper {
                             continue;
                         }
                         if (!self::stopContainer($container)) {
-                            $skipped[]                   = $container['Name'];
-                            self::$skipStartContainers[] = $container['Name']; // still running
+                            $skipped[] = $container['Name'];
                             self::setCurrentContainerName($container, true);
                             continue;
                         }
@@ -1122,6 +1153,7 @@ class ABHelper {
                     }
 
                     if (!self::stopContainer($container)) {
+                        self::startContainer($container); // starts only one whose state was unreadable after the stop; stopContainer() marked the rest
                         self::setCurrentContainerName($container, true);
                         continue;
                     }
