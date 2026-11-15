@@ -654,7 +654,7 @@ if (($code ?? 0) != 0) {
         </div>
         <div class="ab-start-order">
             <div class="title"><span class="left"><i class="fa fa-sort title"></i>Start order</span></div>
-            <p>Containers are started in this sequence and stopped in reverse order.</p>
+            <p>Containers are started in this sequence and stopped in reverse order. When containers are backed up one at a time, each is stopped and started again in turn, from the bottom of the list up.</p>
             <dl>
                 <dt><b>Order from:</b></dt>
                 <dd><select id="containerOrderMode" name="containerOrderMode" data-setting="<?= htmlspecialchars($abSettings->containerOrderMode) ?>">
