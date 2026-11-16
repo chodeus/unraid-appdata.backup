@@ -891,6 +891,7 @@ HTML;
 
         // Discard reloads the saved settings: a form reset puts the data-setting selects above on their first option, not the saved one
         $(document).on('reset', '#abSettingsForm, #abExtraForm', function () {
+            $.cookie('top', $(window).scrollTop()); // as Unraid's refresh(top): its page layout scrolls back here on load
             window.location.replace(window.location.pathname + window.location.search);
             return false;
         });
