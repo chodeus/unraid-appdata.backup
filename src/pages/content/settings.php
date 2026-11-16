@@ -889,6 +889,12 @@ HTML;
             $(this).find('option[value="' + $(this).data('setting') + '"]').prop('selected', true);
         });
 
+        // Discard reloads the saved settings: a form reset puts the data-setting selects above on their first option, not the saved one
+        $(document).on('reset', '#abSettingsForm, #abExtraForm', function () {
+            window.location.replace(window.location.pathname + window.location.search);
+            return false;
+        });
+
         const abSkipped = name => $('select[name="containerSettings[' + name + '][skip]"]').val() === 'yes';
         const abGreyMain = () => abGreyOrder('#containerOrderSortable, [id^="containerGroupOrder_"][id$="_Sortable"]', abSkipped, 'Not in the backup: Skip? is Yes');
         abGreyMain();
