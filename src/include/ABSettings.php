@@ -486,7 +486,7 @@ class ABSettings {
             'Destination' => $run->destination,
             'Retention'   => ($run->deleteBackupsOlderThan === '' ? 'no age limit' : 'older than ' . $run->deleteBackupsOlderThan . ($run->deleteBackupsOlderThan == 1 ? ' day' : ' days')) . ', keep at least ' . ($run->keepMinBackups === '' ? 'none' : $run->keepMinBackups),
             'Containers'  => $this->extraContainers ? implode(', ', $this->extraContainers) : 'none',
-            'Start order' => ($this->extraContainerOrder ? 'own' : 'Settings tab'),
+            'Start order' => $this->containerOrderMode === 'unraid' ? 'Docker tab' : ($this->extraContainerOrder ? 'own' : 'Settings tab'),
         ];
         foreach (self::EXTRA_SAME_AS as $mainKey => $extraKey) {
             $value                     = (string)$run->$mainKey;
