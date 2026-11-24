@@ -233,7 +233,7 @@ class ABSettings {
             return;
         }
         try {
-            $this->$key = isset(self::READERS[$key]) ? [self::class, self::READERS[$key]]($value, $key) : $value; // a reader's null fails here too: these are array properties
+            $this->$key = isset(self::READERS[$key]) ? [self::class, self::READERS[$key]]($value, $key) : $value; // a reader's null fails here too: no property it fills takes null
         } catch (\TypeError) { // a type PHP refuses for this property would stop every page and run: named instead
             self::$unreadable[] = $key;
         }
