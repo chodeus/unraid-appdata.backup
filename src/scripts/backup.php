@@ -62,6 +62,9 @@ if (!file_exists(ABSettings::getConfigPath())) {
 }
 
 $abSettings = new ABSettings();
+if (($abUnreadable = ABSettings::unreadableWarning()) !== '') {
+    ABHelper::backupLog($abUnreadable, ABHelper::LOGLEVEL_WARN);
+}
 
 // Retention never deletes either schedule's destination, even one picked inside the other and named like a set
 $abDestinations = array_filter(array_map(fn($path) => $path === '' ? false : realpath($path), [$abSettings->destination, $abSettings->extraDestination]));

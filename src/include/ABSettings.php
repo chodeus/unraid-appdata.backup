@@ -47,6 +47,9 @@ class ABSettings {
     /** Why the last storeForm kept Skip new containers? as saved (settings.php shows it); null when it did not */
     public static ?string $skipKeptWhy = null;
 
+    /** The config.json settings the last new ABSettings() could not read, so they kept their defaults (see unreadableWarning) */
+    public static array $unreadable = [];
+
     public static $tempFolder = '/tmp/appdata.backup';
 
     public static $logfile = 'ab.log';
@@ -175,72 +178,19 @@ class ABSettings {
 
         self::migrateConfig();
 
-        $sFile = self::getConfigPath();
-        if (file_exists($sFile)) {
-            $config = json_decode(file_get_contents($sFile), true);
-            if ($config) {
-                foreach ($config as $key => $value) {
-                    if (property_exists($this, $key)) {
-                        if (in_array(str_starts_with($key, 'extra') ? lcfirst(substr($key, 5)) : $key, self::RETENTION, true) && !is_string($value) && !is_int($value)) {
-                            $value = json_encode($value); // PHP would cast 1.5 or true to 1, and refuse a list; ABRetention reads none of "1.5", "true" or "[]"
-                        }
-                        switch ($key) {
-                            case 'defaults':
-                                $this->$key = array_merge($this->defaults, $value);
-                                break;
-                            case 'allowedSources':
-                            case 'includeFiles':
-                            case 'globalExclusions':
-                            case 'extraIncludeFiles':
-                            case 'extraGlobalExclusions':
-                                $paths    = preg_split('/\r?\n|\r/', $value);
-                                $newPaths = [];
-                                foreach ($paths as $pathKey => $path) {
-                                    if (empty(trim($path))) {
-                                        continue; // Skip empty lines
-                                    }
-                                    $newPaths[] = rtrim($path, '/');
-                                }
-                                $this->$key = $newPaths;
-                                break;
-                            case 'containerOrderMode':
-                                $this->$key = $value === 'unraid' ? 'unraid' : 'custom';
-                                break;
-                            case 'containerOrder':
-                                // HACK - if something goes wrong while we transfer the jQuery sortable data, the value here would NOT be an array. Better safe than sorry: Force to empty array if it isnt one.
-                                $this->$key = is_array($value) ? $value : [];
-                                break;
-                            case 'extraContainers':
-                                $this->$key = array_map('strval', (array)$value); // a config saved before the strval above may hold numbers
-                                break;
-                            case 'settingsVersion':
-                                $this::$settingsVersion = $value;
-                                break;
-                            case 'containerSettings':
-                            case 'extraContainerSettings':
-                                /**
-                                 * Container specific patches
-                                 */
-                                foreach ($value as $containerName => $containerSettings) {
-                                    $paths    = preg_split('/\r?\n|\r/', (string)($containerSettings['exclude'] ?? ''));
-                                    $newPaths = [];
-                                    foreach ($paths as $pathKey => $path) {
-                                        if (empty(trim($path))) {
-                                            continue; // Skip empty lines
-                                        }
-                                        $newPaths[] = rtrim($path, '/');
-                                    }
-                                    $value[$containerName]['exclude'] = $newPaths;
-                                }
-                                $this->$key = $value;
-                                break;
-                            default:
-                                $this->$key = $value;
-                                break;
-                        }
-                    }
-                }
+        self::$unreadable = [];
+        $config           = self::savedConfig();
+        if ($config === null) {
+            self::$unreadable[] = 'the whole file';
+            $config             = [];
+        }
+        foreach ($config as $key => $value) {
+            if (property_exists($this, $key)) {
+                $this->load((string)$key, $value);
             }
+        }
+        if ($this->extraSchedule !== 'yes') { // no extra runs, and no Extra schedule tab to set them on
+            self::$unreadable = array_values(array_filter(self::$unreadable, fn($item) => !self::onExtraTab($item)));
         }
         ABHelper::$targetLogLevel = $this->notification;
 
@@ -265,6 +215,113 @@ class ABSettings {
         }
     }
 
+    /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention field's that is neither text nor an int is first turned into its JSON text */
+    private function load(string $key, $value) {
+        if (in_array(str_starts_with($key, 'extra') ? lcfirst(substr($key, 5)) : $key, self::RETENTION, true) && !is_string($value) && !is_int($value)) {
+            $value = json_encode($value); // a default, or PHP's cast of 1.5 or true to 1, could delete sets; ABRetention::unreadable() names "1.5", "true" or "[]" and keeps every set
+        }
+        switch ($key) {
+            case 'defaults':
+                if (is_array($value)) {
+                    $this->defaults = array_merge($this->defaults, $value);
+                    return;
+                }
+                break;
+            case 'allowedSources':
+            case 'includeFiles':
+            case 'globalExclusions':
+            case 'extraIncludeFiles':
+            case 'extraGlobalExclusions':
+                if (($paths = self::pathLines($value)) !== null) {
+                    $this->$key = $paths;
+                    return;
+                }
+                break;
+            case 'containerOrderMode':
+                $this->$key = $value === 'unraid' ? 'unraid' : 'custom';
+                return;
+            case 'extraContainers':
+                $this->$key = array_map('strval', (array)$value); // storeForm saves names as strings; an older config may hold numbers
+                return;
+            case 'settingsVersion':
+                $this::$settingsVersion = $value;
+                return;
+            case 'containerSettings':
+            case 'extraContainerSettings':
+                if (is_array($value)) {
+                    $this->$key = $this->containerRows($key, $value);
+                    return;
+                }
+                break;
+            default:
+                try {
+                    $this->$key = $value;
+                    return;
+                } catch (\TypeError) { // a type PHP refuses for this property would stop every page and run: named below instead
+                    break;
+                }
+        }
+        self::$unreadable[] = $key;
+    }
+
+    /** Saved container rows with their exclude as a list of paths; a row, or an exclude, it cannot take is dropped and named in $unreadable */
+    private function containerRows(string $key, array $rows) {
+        foreach ($rows as $name => $row) {
+            if (!is_array($row)) {
+                self::$unreadable[] = "$key ($name)";
+                unset($rows[$name]);
+                continue;
+            }
+            $paths = self::pathLines($row['exclude'] ?? '');
+            if ($paths === null) {
+                self::$unreadable[] = "$key ($name) exclude";
+            }
+            $rows[$name]['exclude'] = $paths ?? [];
+        }
+        return $rows;
+    }
+
+    /** One path per non-empty line of the text, or of a list's texts, without its trailing slash; null for a list holding anything else */
+    private static function pathLines($value) {
+        if (is_array($value)) {
+            if (array_filter($value, fn($line) => !is_string($line))) {
+                return null;
+            }
+            $value = implode("\n", $value);
+        }
+        $paths = [];
+        foreach (preg_split('/\r?\n|\r/', (string)$value) as $path) {
+            if (empty(trim($path))) {
+                continue; // Skip empty lines
+            }
+            $paths[] = rtrim($path, '/');
+        }
+        return $paths;
+    }
+
+    /** Whether an $unreadable item is set on the Extra schedule tab rather than the Settings tab */
+    private static function onExtraTab(string $item) {
+        return in_array(explode(' ', $item)[0], self::EXTRA_FIELDS, true);
+    }
+
+    /** The warning about $unreadable, for the Settings tab and each run's log; '' when every saved setting was read */
+    public static function unreadableWarning() {
+        $extra = array_filter(self::$unreadable, fn($item) => self::onExtraTab($item));
+        $tabs  = array_filter(['the Settings tab' => array_diff(self::$unreadable, $extra), 'the Extra schedule tab' => $extra]);
+        $where = array_map(fn($tab, $items) => "$tab: " . implode(', ', $items), array_keys($tabs), $tabs);
+        return $where ? 'config.json holds settings this version cannot read, so they use their defaults until you set them again and Save on ' . implode('; ', $where) . '.' : '';
+    }
+
+    /** config.json decoded: [] when there is none, null when it holds no settings (not JSON, or not an object) */
+    private static function savedConfig() {
+        $sFile = self::getConfigPath();
+        if (!file_exists($sFile)) {
+            return [];
+        }
+        $config = json_decode((string)file_get_contents($sFile), true);
+        return is_array($config) && !($config && array_is_list($config)) ? $config : null;
+    }
+
     public static function getConfigPath() {
         return self::$pluginDir . DIRECTORY_SEPARATOR . self::$settingsFile;
     }
@@ -276,8 +333,8 @@ class ABSettings {
     public static function migrateConfig() {
         $sFile = self::getConfigPath();
         if (file_exists($sFile)) {
-            $config = json_decode(file_get_contents($sFile), true);
-            if ($config) {
+            $config = self::savedConfig();
+            if ($config) { // the constructor names a file that is not settings
                 if (!isset($config['settingsVersion'])) {
                     $config['settingsVersion'] = 1; // No version set, set the current one
                 }
@@ -723,13 +780,26 @@ class ABSettings {
         };
     }
 
+    /** The saved cron lines of one schedule when the last load could not read one of its settings ($fields, a pattern): a default could stop or move it */
+    private static function keptCronLines(string $fields, bool $extra) {
+        $file = self::$pluginDir . '/' . self::$cronFile;
+        if (!preg_grep($fields, self::$unreadable) || !is_file($file)) {
+            return [];
+        }
+        return array_values(array_filter(file($file, FILE_IGNORE_NEW_LINES) ?: [], fn($line) => str_contains($line, '/scripts/backup.php') && str_contains($line, ' extra ') === $extra)); // older versions wrote the main line without 'scheduled'
+    }
+
     /**
      * @return array
      */
     public function checkCron() {
         $lines = [];
         // 'scheduled' makes a run wait for a running job instead of being refused
-        foreach (['backupFrequency' => 'scheduled', 'extraFrequency' => 'scheduled extra'] as $prefix => $args) {
+        foreach (['backupFrequency' => ['scheduled', '/^backupFrequency/'], 'extraFrequency' => ['scheduled extra', '/^(extraFrequency|extraSchedule$)/']] as $prefix => [$args, $fields]) {
+            if ($kept = self::keptCronLines($fields, $prefix === 'extraFrequency')) {
+                array_push($lines, ...$kept);
+                continue;
+            }
             $time = $prefix === 'extraFrequency' && $this->extraSchedule !== 'yes' ? '' : $this->cronTime($prefix);
             if ($time !== '') {
                 $lines[] = $time . ' php ' . dirname(__DIR__) . '/scripts/backup.php ' . $args . ' > /dev/null 2>&1';
