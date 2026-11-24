@@ -49,6 +49,8 @@ class ABSettings {
 
     /** The config.json settings the last new ABSettings() could not read, so they kept their defaults (see unreadableWarning) */
     public static array $unreadable = [];
+    /** $unreadable's item when config.json holds no settings at all */
+    const WHOLE_FILE = 'the whole file';
 
     public static $tempFolder = '/tmp/appdata.backup';
 
@@ -181,7 +183,7 @@ class ABSettings {
         self::$unreadable = [];
         $config           = self::savedConfig();
         if ($config === null) {
-            self::$unreadable[] = 'the whole file';
+            self::$unreadable[] = self::WHOLE_FILE;
             $config             = [];
         }
         foreach ($config as $key => $value) {
@@ -215,70 +217,78 @@ class ABSettings {
         }
     }
 
+    /** How load() reads a setting PHP would refuse or misread as saved: setting => reader. A reader's null keeps the default and is named */
+    private const READERS = ['defaults' => 'defaultsRow', 'allowedSources' => 'pathLines', 'includeFiles' => 'pathLines', 'globalExclusions' => 'pathLines',
+        'extraIncludeFiles' => 'pathLines', 'extraGlobalExclusions' => 'pathLines', 'containerOrderMode' => 'orderMode', 'containerOrder' => 'order',
+        'extraContainerOrder' => 'order', 'containerGroupOrder' => 'groupOrder', 'extraContainers' => 'containerNames', 'containerSettings' => 'containerRows',
+        'extraContainerSettings' => 'containerRows'];
+
     /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention field's that is neither text nor an int is first turned into its JSON text */
     private function load(string $key, $value) {
         if (in_array(str_starts_with($key, 'extra') ? lcfirst(substr($key, 5)) : $key, self::RETENTION, true) && !is_string($value) && !is_int($value)) {
             $value = json_encode($value); // a default, or PHP's cast of 1.5 or true to 1, could delete sets; ABRetention::unreadable() names "1.5", "true" or "[]" and keeps every set
         }
-        switch ($key) {
-            case 'defaults':
-                if (is_array($value)) {
-                    $this->defaults = array_merge($this->defaults, $value);
-                    return;
-                }
-                break;
-            case 'allowedSources':
-            case 'includeFiles':
-            case 'globalExclusions':
-            case 'extraIncludeFiles':
-            case 'extraGlobalExclusions':
-                if (($paths = self::pathLines($value)) !== null) {
-                    $this->$key = $paths;
-                    return;
-                }
-                break;
-            case 'containerOrderMode':
-                $this->$key = $value === 'unraid' ? 'unraid' : 'custom';
-                return;
-            case 'extraContainers':
-                $this->$key = array_map('strval', (array)$value); // storeForm saves names as strings; an older config may hold numbers
-                return;
-            case 'settingsVersion':
-                $this::$settingsVersion = $value;
-                return;
-            case 'containerSettings':
-            case 'extraContainerSettings':
-                if (is_array($value)) {
-                    $this->$key = $this->containerRows($key, $value);
-                    return;
-                }
-                break;
-            default:
-                try {
-                    $this->$key = $value;
-                    return;
-                } catch (\TypeError) { // a type PHP refuses for this property would stop every page and run: named below instead
-                    break;
-                }
+        if ($key === 'settingsVersion') {
+            $this::$settingsVersion = $value;
+            return;
         }
-        self::$unreadable[] = $key;
+        try {
+            $this->$key = isset(self::READERS[$key]) ? [self::class, self::READERS[$key]]($value, $key) : $value; // a reader's null fails here too: these are array properties
+        } catch (\TypeError) { // a type PHP refuses for this property would stop every page and run: named instead
+            self::$unreadable[] = $key;
+        }
     }
 
-    /** Saved container rows with their exclude as a list of paths; a row, or an exclude, it cannot take is dropped and named in $unreadable */
-    private function containerRows(string $key, array $rows) {
+    /** The saved defaults over the built-in ones, read like a container row (row()); null when they are not a map */
+    private static function defaultsRow($value) {
+        return is_array($value) ? array_merge(get_class_vars(self::class)['defaults'], self::row('defaults', $value)) : null;
+    }
+
+    /** 'unraid' (the Docker tab's start order), or 'custom' for any other value */
+    private static function orderMode($value) {
+        return $value === 'unraid' ? 'unraid' : 'custom';
+    }
+
+    /** A saved start order's container names: anything else in it, or an order that is not a list, is left out, so those start in the default order */
+    private static function order($value) {
+        return is_array($value) ? array_filter($value, fn($name) => is_string($name) || is_int($name)) : [];
+    }
+
+    /** Each group's start order (order()) */
+    private static function groupOrder($value) {
+        return is_array($value) ? array_map(fn($order) => self::order($order), $value) : [];
+    }
+
+    /** Saved container names as strings (storeForm saves strings; an older config may hold numbers); null when one is neither */
+    private static function containerNames($value) {
+        $names = (array)$value;
+        return array_filter($names, fn($name) => !is_string($name) && !is_int($name)) ? null : array_map('strval', $names);
+    }
+
+    /** Saved container rows (row()); a row that is not a map is dropped and named in $unreadable; null when the rows are not a map */
+    private static function containerRows($rows, string $key) {
+        if (!is_array($rows)) {
+            return null;
+        }
         foreach ($rows as $name => $row) {
             if (!is_array($row)) {
                 self::$unreadable[] = "$key ($name)";
                 unset($rows[$name]);
                 continue;
             }
-            $paths = self::pathLines($row['exclude'] ?? '');
-            if ($paths === null) {
-                self::$unreadable[] = "$key ($name) exclude";
-            }
-            $rows[$name]['exclude'] = $paths ?? [];
+            $rows[$name] = self::row("$key ($name)", $row);
         }
         return $rows;
+    }
+
+    /** A container row, or the defaults, with its exclude as a list of paths: one it cannot read is empty and named in $unreadable */
+    private static function row(string $item, array $row) {
+        $paths = self::pathLines($row['exclude'] ?? '');
+        if ($paths === null) {
+            self::$unreadable[] = "$item exclude";
+        }
+        $row['exclude'] = $paths ?? [];
+        return $row;
     }
 
     /** One path per non-empty line of the text, or of a list's texts, without its trailing slash; null for a list holding anything else */
@@ -309,7 +319,7 @@ class ABSettings {
         $extra = array_filter(self::$unreadable, fn($item) => self::onExtraTab($item));
         $tabs  = array_filter(['the Settings tab' => array_diff(self::$unreadable, $extra), 'the Extra schedule tab' => $extra]);
         $where = array_map(fn($tab, $items) => "$tab: " . implode(', ', $items), array_keys($tabs), $tabs);
-        return $where ? 'config.json holds settings this version cannot read, so they use their defaults until you set them again and Save on ' . implode('; ', $where) . '.' : '';
+        return $where ? 'config.json holds settings this version cannot read, so they use their defaults, and retention keeps every backup set, until you set them again and Save on ' . implode('; ', $where) . '.' : '';
     }
 
     /** config.json decoded: [] when there is none, null when it holds no settings (not JSON, or not an object) */
@@ -780,13 +790,14 @@ class ABSettings {
         };
     }
 
-    /** The saved cron lines of one schedule when the last load could not read one of its settings ($fields, a pattern): a default could stop or move it */
+    /** The saved cron lines of one schedule when the last load could not read one of its settings ($fields, a pattern) or the whole file: a default could stop or move it. null when the cron file cannot be read */
     private static function keptCronLines(string $fields, bool $extra) {
         $file = self::$pluginDir . '/' . self::$cronFile;
-        if (!preg_grep($fields, self::$unreadable) || !is_file($file)) {
+        if ((!preg_grep($fields, self::$unreadable) && !in_array(self::WHOLE_FILE, self::$unreadable, true)) || !is_file($file)) {
             return [];
         }
-        return array_values(array_filter(file($file, FILE_IGNORE_NEW_LINES) ?: [], fn($line) => str_contains($line, '/scripts/backup.php') && str_contains($line, ' extra ') === $extra)); // older versions wrote the main line without 'scheduled'
+        $lines = file($file, FILE_IGNORE_NEW_LINES);
+        return $lines === false ? null : array_values(array_filter($lines, fn($line) => str_contains($line, '/scripts/backup.php') && str_contains($line, ' extra ') === $extra)); // older versions wrote the main line without 'scheduled'
     }
 
     /**
@@ -796,7 +807,11 @@ class ABSettings {
         $lines = [];
         // 'scheduled' makes a run wait for a running job instead of being refused
         foreach (['backupFrequency' => ['scheduled', '/^backupFrequency/'], 'extraFrequency' => ['scheduled extra', '/^(extraFrequency|extraSchedule$)/']] as $prefix => [$args, $fields]) {
-            if ($kept = self::keptCronLines($fields, $prefix === 'extraFrequency')) {
+            $kept = self::keptCronLines($fields, $prefix === 'extraFrequency');
+            if ($kept === null) {
+                return [1, ['The cron file ' . self::$pluginDir . '/' . self::$cronFile . ' could not be read, so the schedules were left as they were']];
+            }
+            if ($kept) {
                 array_push($lines, ...$kept);
                 continue;
             }

@@ -63,7 +63,7 @@ if (!file_exists(ABSettings::getConfigPath())) {
 
 $abSettings = new ABSettings();
 if (($abUnreadable = ABSettings::unreadableWarning()) !== '') {
-    ABHelper::backupLog($abUnreadable, ABHelper::LOGLEVEL_WARN);
+    ABHelper::backupLog($abUnreadable, ABHelper::LOGLEVEL_ERR); // a default may leave things out of the set, so retention keeps every set too (ABRetention::off)
 }
 
 // Retention never deletes either schedule's destination, even one picked inside the other and named like a set
@@ -72,7 +72,8 @@ $abDestinations = array_filter(array_map(fn($path) => $path === '' ? false : rea
 if (in_array('extra', $runArgs, true)) {
     ABHelper::backupLog("Running the extra schedule: only its chosen containers, into its own destination.");
     if ($abSettings->extraSchedule !== 'yes') {
-        ABHelper::backupLog("The extra schedule is turned off (Settings, Use an extra schedule?).", ABHelper::LOGLEVEL_ERR);
+        ABHelper::backupLog(array_intersect(['extraSchedule', ABSettings::WHOLE_FILE], ABSettings::$unreadable) ? "The extra schedule did not run: Use an extra schedule? could not be read from config.json (see above)."
+            : "The extra schedule is turned off (Settings, Use an extra schedule?).", ABHelper::LOGLEVEL_ERR);
         goto end;
     }
     $extraReal = $abSettings->extraDestination === '' ? false : realpath($abSettings->extraDestination); // realpath('') is the working directory
