@@ -223,7 +223,7 @@ class ABSettings {
         'extraContainerOrder' => 'order', 'containerGroupOrder' => 'groupOrder', 'extraContainers' => 'containerNames', 'containerSettings' => 'containerRows',
         'extraContainerSettings' => 'containerRows'];
 
-    /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention field's that is neither text nor an int is first turned into its JSON text */
+    /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention value that is neither text nor an int is first turned into its JSON text */
     private function load(string $key, $value) {
         if (in_array(str_starts_with($key, 'extra') ? lcfirst(substr($key, 5)) : $key, self::RETENTION, true) && !is_string($value) && !is_int($value)) {
             $value = json_encode($value); // a default, or PHP's cast of 1.5 or true to 1, could delete sets; ABRetention::unreadable() names "1.5", "true" or "[]" and keeps every set
