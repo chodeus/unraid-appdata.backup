@@ -264,7 +264,7 @@ class ABSettings {
         return is_array($value) ? array_map(fn($order) => self::order($order), $value) : [];
     }
 
-    /** Saved container names as strings (storeForm saves a list of strings; an older config may hold numbers); null when it is not a list of them */
+    /** Saved container names as strings (storeForm saves a list of strings; an older config may hold numbers); null for anything but an array of them */
     private static function containerNames($value) {
         return !is_array($value) || array_filter($value, fn($name) => !is_string($name) && !is_int($name)) ? null : array_map('strval', $value);
     }
@@ -288,7 +288,7 @@ class ABSettings {
     /** A container row, or the defaults, with its exclude as a list of paths (one it cannot read is empty) and any other setting not held as text or a number left out, so the default applies; each that held a value is named in $unreadable */
     private static function row(string $item, array $row) {
         $exclude = $row['exclude'] ?? '';
-        $paths   = self::pathLines(empty($exclude) && !is_string($exclude) ? '' : $exclude); // an empty one held no setting to lose, as below
+        $paths   = self::pathLines(in_array($exclude, [false, []], true) ? '' : $exclude); // an empty one held no setting to lose, as below
         if ($paths === null) {
             self::$unreadable[] = "$item exclude";
         }
