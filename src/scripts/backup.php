@@ -72,7 +72,7 @@ $abDestinations = array_filter(array_map(fn($path) => $path === '' ? false : rea
 if (in_array('extra', $runArgs, true)) {
     ABHelper::backupLog("Running the extra schedule: only its chosen containers, into its own destination.");
     if ($abSettings->extraSchedule !== 'yes') {
-        ABHelper::backupLog(array_intersect(['extraSchedule', ABSettings::WHOLE_FILE], ABSettings::$unreadable) ? "The extra schedule did not run: Use an extra schedule? could not be read from config.json (see above)."
+        ABHelper::backupLog(ABSettings::unread('/^extraSchedule$/') ? "The extra schedule did not run: Use an extra schedule? could not be read from config.json (see above)."
             : "The extra schedule is turned off (Settings, Use an extra schedule?).", ABHelper::LOGLEVEL_ERR);
         goto end;
     }

@@ -182,7 +182,7 @@ class ABSettings {
 
         self::$unreadable = [];
         $config           = self::savedConfig();
-        if ($config === null) {
+        if (!is_array($config)) {
             self::$unreadable[] = self::WHOLE_FILE;
             $config             = [];
         }
@@ -281,13 +281,22 @@ class ABSettings {
         return $rows;
     }
 
-    /** A container row, or the defaults, with its exclude as a list of paths: one it cannot read is empty and named in $unreadable */
+    /** A container row, or the defaults, with its exclude as a list of paths (one it cannot read is empty) and any other setting not held as text or a number left out, so the default applies; each that held a value is named in $unreadable */
     private static function row(string $item, array $row) {
         $paths = self::pathLines($row['exclude'] ?? '');
         if ($paths === null) {
             self::$unreadable[] = "$item exclude";
         }
         $row['exclude'] = $paths ?? [];
+        foreach ([...array_keys(get_class_vars(self::class)['defaults']), 'excludeOwn'] as $field) { // excludeOwn: the extra rows'
+            if ($field === 'exclude' || !array_key_exists($field, $row) || is_string($row[$field]) || is_int($row[$field])) {
+                continue;
+            }
+            if (!empty($row[$field])) {
+                self::$unreadable[] = "$item $field"; // an empty one held no setting to lose
+            }
+            unset($row[$field]);
+        }
         return $row;
     }
 
@@ -301,7 +310,7 @@ class ABSettings {
         }
         $paths = [];
         foreach (preg_split('/\r?\n|\r/', (string)$value) as $path) {
-            if (empty(trim($path))) {
+            if (trim($path) === '') {
                 continue; // Skip empty lines
             }
             $paths[] = rtrim($path, '/');
@@ -316,19 +325,32 @@ class ABSettings {
 
     /** The warning about $unreadable, for the Settings tab and each run's log; '' when every saved setting was read */
     public static function unreadableWarning() {
+        if (in_array(self::WHOLE_FILE, self::$unreadable, true)) {
+            return self::savedConfig() === false // a Save is refused then: see storeForm
+                ? 'config.json on the flash drive could not be read, so every setting uses its default, and retention keeps every backup set, until it can be read again.'
+                : 'config.json could not be read as settings, so every setting uses its default, and retention keeps every backup set, until you set them again and Save on the Settings tab.';
+        }
         $extra = array_filter(self::$unreadable, fn($item) => self::onExtraTab($item));
         $tabs  = array_filter(['the Settings tab' => array_diff(self::$unreadable, $extra), 'the Extra schedule tab' => $extra]);
         $where = array_map(fn($tab, $items) => "$tab: " . implode(', ', $items), array_keys($tabs), $tabs);
         return $where ? 'config.json holds settings this version cannot read, so they use their defaults, and retention keeps every backup set, until you set them again and Save on ' . implode('; ', $where) . '.' : '';
     }
 
-    /** config.json decoded: [] when there is none, null when it holds no settings (not JSON, or not an object) */
+    /** Whether the last load could not read a setting matching $pattern, or the whole file */
+    public static function unread(string $pattern) {
+        return in_array(self::WHOLE_FILE, self::$unreadable, true) || preg_grep($pattern, self::$unreadable);
+    }
+
+    /** config.json decoded: [] when there is none, false when it cannot be read, null when it holds no settings (not JSON, or not an object) */
     private static function savedConfig() {
         $sFile = self::getConfigPath();
         if (!file_exists($sFile)) {
             return [];
         }
-        $config = json_decode((string)file_get_contents($sFile), true);
+        if (($raw = @file_get_contents($sFile)) === false) {
+            return false;
+        }
+        $config = json_decode($raw, true);
         return is_array($config) && !($config && array_is_list($config)) ? $config : null;
     }
 
@@ -397,14 +419,17 @@ class ABSettings {
 
     /** Stores a posted form: the Settings tab's replaces all but EXTRA_FIELDS, the Extra schedule tab's (extraScheduleForm) only those; false if the saved config cannot be read to keep the rest */
     public static function storeForm(array $post) {
-        $raw   = @file_get_contents(self::getConfigPath());
-        $saved = $raw === false ? [] : json_decode($raw, true);
-        $extra = array_flip(self::EXTRA_FIELDS);
+        $saved = self::savedConfig();
+        if ($saved === false || ($saved === null && isset($post['extraScheduleForm']))) {
+            return false; // only the Settings tab's Save replaces a config.json that holds no settings, as the warning asks
+        }
+        $saved ??= [];
+        $extra   = array_flip(self::EXTRA_FIELDS);
         if (!isset($post['extraScheduleForm'])) {
-            $prev  = is_array($saved) ? $saved : [];
+            $prev  = $saved;
             $names = self::dockerNames();
             $post  = self::keepUndrawn($post, $prev, $names); // also when no panels were drawn (Docker down at the draw)
-            if (($post['containerOrderMode'] ?? '') === 'unraid' && is_array($saved)) {
+            if (($post['containerOrderMode'] ?? '') === 'unraid') {
                 // The lists were shown in the Docker tab order and could not be dragged: keep the custom lists as saved
                 foreach (['containerOrder', 'containerGroupOrder'] as $key) {
                     unset($post[$key]);
@@ -416,9 +441,6 @@ class ABSettings {
             $post = self::keepListedSkip($post, $prev, $names);
             self::store($post + array_intersect_key($prev, $extra));
             return true;
-        }
-        if (!is_array($saved)) {
-            return false; // storing only the extra fields would wipe every other setting
         }
         // Skip? per container (name => yes/no; the schedule keeps the No ones), and the start order as a jQuery sortable string, as settings.php gets containerOrder
         $fields                    = array_intersect_key($post, $extra);
@@ -793,7 +815,7 @@ class ABSettings {
     /** The saved cron lines of one schedule when the last load could not read one of its settings ($fields, a pattern) or the whole file: a default could stop or move it. null when the cron file cannot be read */
     private static function keptCronLines(string $fields, bool $extra) {
         $file = self::$pluginDir . '/' . self::$cronFile;
-        if ((!preg_grep($fields, self::$unreadable) && !in_array(self::WHOLE_FILE, self::$unreadable, true)) || !is_file($file)) {
+        if (!self::unread($fields) || !is_file($file)) {
             return [];
         }
         $lines = file($file, FILE_IGNORE_NEW_LINES);

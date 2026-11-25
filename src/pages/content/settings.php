@@ -141,8 +141,9 @@ window.setTimeout(function() {
     }
 
     // Unraid draws the tabs before this runs, so the Extra schedule tab only follows the toggle on the next load
-    $abTabsChanged = (json_decode((string)@file_get_contents(ABSettings::getConfigPath()), true)['extraSchedule'] ?? 'no') !== ($_POST['extraSchedule'] ?? 'no');
-    ABSettings::storeForm($_POST);
+    $abExtraWas    = json_decode((string)@file_get_contents(ABSettings::getConfigPath()), true)['extraSchedule'] ?? 'no';
+    $abSaved       = ABSettings::storeForm($_POST);
+    $abTabsChanged = $abSaved && $abExtraWas !== ($_POST['extraSchedule'] ?? 'no'); // a refused Save changed nothing, and the reload would hide why
 }
 
 $abSettings = new ABSettings();
@@ -252,6 +253,9 @@ HTML;
 
 }
 
+if (($abSaved ?? null) === false) {
+    echo '<p class="ab-warn">Not saved: config.json on the flash drive could not be read, so saving would have lost the settings kept in it, such as the Extra schedule tab\'s. Check the flash drive, then Save again.</p>';
+}
 if (($abUnreadable = ABSettings::unreadableWarning()) !== '') {
     echo '<p class="ab-warn">' . htmlspecialchars($abUnreadable) . '</p>';
 }
