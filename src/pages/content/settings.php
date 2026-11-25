@@ -34,14 +34,12 @@ if (isset($_POST['extraScheduleForm'])) {
     }
 
     if (isset($_POST['migrateConfig'])) {
-        $abSettings = null;
-        if (file_exists(ABSettings::getConfigPath())) {
-            $abSettings = json_decode(file_get_contents(ABSettings::getConfigPath()), true);
+        $abSettings = ABSettings::savedConfig();
+        if ($abSettings === false) {
+            echo "<h1>Not migrated!</h1><p>config.json on the flash drive could not be read, so migrating would have lost the settings kept in it. Check the flash drive, then migrate again.</p>";
+            exit;
         }
-
-        if (empty($abSettings)) {
-            $abSettings = [];
-        }
+        $abSettings ??= []; // not settings: the migration replaces it, as the Settings tab's Save does
         $oldConfig = json_decode(file_get_contents('/boot/config/plugins/ca.backup2/BackupOptions.json'), true);
 
         if (!empty($oldConfig['destinationShare'])) {

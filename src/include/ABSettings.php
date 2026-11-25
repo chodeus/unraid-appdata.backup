@@ -342,7 +342,7 @@ class ABSettings {
     }
 
     /** config.json decoded: [] when there is none, false when it cannot be read, null when it holds no settings (not JSON, or not an object) */
-    private static function savedConfig() {
+    public static function savedConfig() {
         $sFile = self::getConfigPath();
         if (!file_exists($sFile)) {
             return [];
