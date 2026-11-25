@@ -264,10 +264,9 @@ class ABSettings {
         return is_array($value) ? array_map(fn($order) => self::order($order), $value) : [];
     }
 
-    /** Saved container names as strings (storeForm saves strings; an older config may hold numbers); null when one is neither */
+    /** Saved container names as strings (storeForm saves a list of strings; an older config may hold numbers); null when it is not a list of them */
     private static function containerNames($value) {
-        $names = (array)$value;
-        return array_filter($names, fn($name) => !is_string($name) && !is_int($name)) ? null : array_map('strval', $names);
+        return !is_array($value) || array_filter($value, fn($name) => !is_string($name) && !is_int($name)) ? null : array_map('strval', $value);
     }
 
     /** Saved container rows (row()); a row that is not a map is dropped and named in $unreadable; null when the rows are not a map */
