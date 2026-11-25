@@ -49,6 +49,12 @@ class ABSettings {
 
     /** The config.json settings the last new ABSettings() could not read, so they kept their defaults (see unreadableWarning) */
     public static array $unreadable = [];
+    /** Whether the last new ABSettings() could not read config.json at all, as against reading it as no settings */
+    private static bool $fileUnread = false;
+    /** Why storeForm() stored nothing: the saved settings could not be read to keep the rest, or config.json could not be written */
+    const NOT_READ = 'read', NOT_WRITTEN = 'written';
+    /** What both tabs show for NOT_WRITTEN */
+    const NOT_WRITTEN_TEXT = 'Not saved: config.json on the flash drive could not be written. Check the flash drive, then Save again.';
     /** $unreadable's item when config.json holds no settings at all */
     const WHOLE_FILE = 'the whole file';
 
@@ -182,6 +188,7 @@ class ABSettings {
 
         self::$unreadable = [];
         $config           = self::savedConfig();
+        self::$fileUnread = $config === false;
         if (!is_array($config)) {
             self::$unreadable[] = self::WHOLE_FILE;
             $config             = [];
@@ -191,8 +198,9 @@ class ABSettings {
                 $this->load((string)$key, $value);
             }
         }
-        if ($this->extraSchedule !== 'yes') { // no extra runs, and no Extra schedule tab to set them on
-            self::$unreadable = array_values(array_filter(self::$unreadable, fn($item) => !self::onExtraTab($item)));
+        if ($this->extraSchedule !== 'yes') { // no extra runs, and no Extra schedule tab to set them on; a main run's retention still keeps out of extraDestination
+            self::$unreadable = array_values(array_filter(self::$unreadable, fn($item) => !self::onExtraTab($item) || $item === 'extraDestination'));
+            self::$unreadable = array_map(fn($item) => $item === 'extraDestination' ? "$item (Use an extra schedule? Yes shows its tab)" : $item, self::$unreadable);
         }
         ABHelper::$targetLogLevel = $this->notification;
 
@@ -222,15 +230,19 @@ class ABSettings {
         'extraIncludeFiles' => 'pathLines', 'extraGlobalExclusions' => 'pathLines', 'containerOrderMode' => 'orderMode', 'containerOrder' => 'order',
         'extraContainerOrder' => 'order', 'containerGroupOrder' => 'groupOrder', 'extraContainers' => 'containerNames', 'containerSettings' => 'containerRows',
         'extraContainerSettings' => 'containerRows', 'backupMethod' => 'backupMethod', 'extraBackupMethod' => 'backupMethod',
-        'backupFrequency' => 'frequency', 'extraFrequency' => 'frequency'];
+        'backupFrequency' => 'frequency', 'extraFrequency' => 'frequency', 'extraSchedule' => 'yesNo'];
 
     /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention value that is neither text nor an int is first turned into its JSON text */
     private function load(string $key, $value) {
         if (in_array(str_starts_with($key, 'extra') ? lcfirst(substr($key, 5)) : $key, self::RETENTION, true) && !is_string($value) && !is_int($value)) {
-            $value = json_encode($value); // a default, or PHP's cast of 1.5 or true to 1, could delete sets; ABRetention::unreadable() names "1.5", "true" or "[]" and keeps every set
+            $value = json_encode($value) ?: var_export($value, true); // a default, or PHP's cast of 1.5 or true to 1, could delete sets; ABRetention::unreadable() names "1.5", "true", "[]" or INF (1e400, which has no JSON) and keeps every set
         }
         if ($key === 'settingsVersion') {
-            $this::$settingsVersion = $value;
+            if (self::isVersion($value)) {
+                $this::$settingsVersion = $value;
+            } else {
+                self::$unreadable[] = $key; // migrateConfig() skipped it
+            }
             return;
         }
         try {
@@ -255,12 +267,22 @@ class ABSettings {
         return in_array($value, ['disabled', 'daily', 'weekly', 'monthly', 'custom'], true) ? $value : null;
     }
 
+    /** 'yes' or 'no', as the select offers: checkCron() would read other text as no and drop the saved extra line */
+    private static function yesNo($value) {
+        return in_array($value, ['yes', 'no'], true) ? $value : null;
+    }
+
+    /** A settingsVersion migrateConfig() can count up from: a whole number from 1, or its digits as the Settings tab posts it */
+    private static function isVersion($value) {
+        return (is_int($value) || (is_string($value) && ctype_digit($value))) && (int)$value >= 1;
+    }
+
     /** 'unraid' (the Docker tab's start order), or 'custom' for any other value */
     private static function orderMode($value) {
         return $value === 'unraid' ? 'unraid' : 'custom';
     }
 
-    /** A saved start order's container names: anything else in it, or an order that is not a list, is left out, so those start in the default order */
+    /** A saved start order's container names: anything else in it, or an order that is not an array, is left out, so those start in the default order */
     private static function order($value) {
         return is_array($value) ? array_filter($value, fn($name) => is_string($name) || is_int($name)) : [];
     }
@@ -339,7 +361,7 @@ class ABSettings {
     /** The warning about $unreadable, for the Settings tab and each run's log; '' when every saved setting was read */
     public static function unreadableWarning() {
         if (in_array(self::WHOLE_FILE, self::$unreadable, true)) {
-            return self::savedConfig() === false // a Save is refused then: see storeForm
+            return self::$fileUnread // a Save is refused while it cannot be read: see storeForm
                 ? 'config.json on the flash drive could not be read, so every setting uses its default, and retention keeps every backup set, until it can be read again.'
                 : 'config.json could not be read as settings, so every setting uses its default, and retention keeps every backup set, until you set them again and Save on the Settings tab.';
         }
@@ -383,6 +405,9 @@ class ABSettings {
                 if (!isset($config['settingsVersion'])) {
                     $config['settingsVersion'] = 1; // No version set, set the current one
                 }
+                if (!self::isVersion($config['settingsVersion'])) {
+                    return; // false never counts up, so the loop below would not end; the constructor names it
+                }
                 for ($curMigrationStep = $config['settingsVersion']; $curMigrationStep < ABSettings::$settingsVersion; $curMigrationStep++) {
                     exec('logger -t "' . self::$appName . '" Found migrations! Running Migration for version ' . $curMigrationStep . ' to ' . (ABSettings::$settingsVersion));
 
@@ -410,9 +435,12 @@ class ABSettings {
                             break;
                     }
                     if ($migrationSuccess) {
-                        exec('logger -t "' . self::$appName . '" Migration was successful!');
                         $config['settingsVersion']++;
-                        self::store($config);
+                        if (!self::store($config)) {
+                            exec('logger -t "' . self::$appName . '" ERROR: Migration could not be written to config.json');
+                            return; // the next load runs it again
+                        }
+                        exec('logger -t "' . self::$appName . '" Migration was successful!');
                     } else {
                         exec('logger -t "' . self::$appName . '" ERROR: Migration was NOT successful!');
                     }
@@ -421,20 +449,22 @@ class ABSettings {
         }
     }
 
-    /**
-     * Stores a config to disk
-     * @param array $config
-     * @return void
-     */
+    /** Writes config.json through a temporary file, so a failed write leaves the old one; false when it could not */
     public static function store(array $config) {
-        file_put_contents(ABSettings::getConfigPath(), json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        $sFile = self::getConfigPath();
+        $json  = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($json === false || @file_put_contents("$sFile.tmp", $json) !== strlen($json) || !@rename("$sFile.tmp", $sFile)) {
+            @unlink("$sFile.tmp");
+            return false;
+        }
+        return true;
     }
 
-    /** Stores a posted form: the Settings tab's replaces all but EXTRA_FIELDS, the Extra schedule tab's (extraScheduleForm) only those; false if the saved config cannot be read to keep the rest */
+    /** Stores a posted form: the Settings tab's replaces all but EXTRA_FIELDS, the Extra schedule tab's (extraScheduleForm) only those; null when stored, else NOT_READ or NOT_WRITTEN */
     public static function storeForm(array $post) {
         $saved = self::savedConfig();
         if ($saved === false || ($saved === null && isset($post['extraScheduleForm']))) {
-            return false; // only the Settings tab's Save replaces a config.json that holds no settings, as the warning asks
+            return self::NOT_READ; // only the Settings tab's Save replaces a config.json that holds no settings, as the warning asks
         }
         $saved ??= [];
         $extra   = array_flip(self::EXTRA_FIELDS);
@@ -452,8 +482,7 @@ class ABSettings {
                 }
             }
             $post = self::keepListedSkip($post, $prev, $names);
-            self::store($post + array_intersect_key($prev, $extra));
-            return true;
+            return self::store($post + array_intersect_key($prev, $extra)) ? null : self::NOT_WRITTEN;
         }
         // Skip? per container (name => yes/no; the schedule keeps the No ones), and the start order as a jQuery sortable string, as settings.php gets containerOrder
         $fields                    = array_intersect_key($post, $extra);
@@ -481,8 +510,7 @@ class ABSettings {
             $fields['extraContainerSettings'] += array_filter((array)($saved['extraContainerSettings'] ?? []), $undrawn, ARRAY_FILTER_USE_KEY);
             $fields['extraContainerOrder'] = self::keepPlaces((array)($fields['extraContainerOrder'] ?? []), (array)($saved['extraContainerOrder'] ?? []), $undrawn); // the $keep loop unsets it in Docker tab order when none was saved
         }
-        self::store(array_diff_key($saved, $extra) + $fields);
-        return true;
+        return self::store(array_diff_key($saved, $extra) + $fields) ? null : self::NOT_WRITTEN;
     }
 
     /** Skip new containers? decides only for containers added after the Save that changes it: a listed container with no Skip? choice posted or saved gets the old value as its own */
@@ -856,10 +884,10 @@ class ABSettings {
             }
         }
 
-        if ($lines) {
-            file_put_contents(ABSettings::$pluginDir . '/' . ABSettings::$cronFile, '# Appdata.Backup cron settings' . PHP_EOL . implode(PHP_EOL, $lines) . PHP_EOL);
-        } elseif (file_exists(ABSettings::$pluginDir . '/' . ABSettings::$cronFile)) {
-            unlink(ABSettings::$pluginDir . '/' . ABSettings::$cronFile);
+        $cronPath = self::$pluginDir . '/' . self::$cronFile;
+        $written  = $lines ? @file_put_contents($cronPath, '# Appdata.Backup cron settings' . PHP_EOL . implode(PHP_EOL, $lines) . PHP_EOL) !== false : !file_exists($cronPath) || @unlink($cronPath);
+        if (!$written) {
+            return [1, ["The cron file $cronPath could not be written, so the schedules may not match these settings"]];
         }
         // Let dcron know our changes via update_cron
         $out = $code = 0;

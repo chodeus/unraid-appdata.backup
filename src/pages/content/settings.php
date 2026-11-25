@@ -23,7 +23,7 @@ if (!ABHelper::isArrayOnline()) {
  * POST Handling
  */
 if (isset($_POST['extraScheduleForm'])) {
-    $abExtraSaved = ABSettings::storeForm($_POST); // read by extra.php
+    $abExtraNotSaved = ABSettings::storeForm($_POST); // read by extra.php
 } elseif ($_POST) {
     if (isset($_POST['debugForm'])) {
         echo "<pre>" . print_r($_POST, true) . "</pre>";
@@ -38,6 +38,13 @@ if (isset($_POST['extraScheduleForm'])) {
         if ($abSettings === false) {
             echo "<h1>Not migrated!</h1><p>config.json on the flash drive could not be read, so migrating would have lost the settings kept in it. Check the flash drive, then migrate again.</p>";
             exit;
+        }
+        if ($abSettings !== null) {
+            new ABSettings(); // names every setting it cannot read: a defaults or container row of the wrong type would stop the writes below
+            if (ABSettings::$unreadable) {
+                echo '<h1>Not migrated!</h1><p>' . htmlspecialchars(ABSettings::unreadableWarning()) . ' Then migrate again.</p>';
+                exit;
+            }
         }
         $abSettings ??= []; // not settings: the migration replaces it, as the Settings tab's Save does
         $oldConfig = json_decode(file_get_contents('/boot/config/plugins/ca.backup2/BackupOptions.json'), true);
@@ -101,7 +108,10 @@ if (isset($_POST['extraScheduleForm'])) {
             }
         }
 
-        ABSettings::store($abSettings);
+        if (!ABSettings::store($abSettings)) {
+            echo "<h1>Not migrated!</h1><p>config.json on the flash drive could not be written. Check the flash drive, then migrate again.</p>";
+            exit;
+        }
         // This branch exits, so the checkCron() call after a normal save never runs for it
         [$code, $out] = (new ABSettings())->checkCron();
         if ($code != 0) {
@@ -140,8 +150,8 @@ window.setTimeout(function() {
 
     // Unraid draws the tabs before this runs, so the Extra schedule tab only follows the toggle on the next load
     $abExtraWas    = json_decode((string)@file_get_contents(ABSettings::getConfigPath()), true)['extraSchedule'] ?? 'no';
-    $abSaved       = ABSettings::storeForm($_POST);
-    $abTabsChanged = $abSaved && $abExtraWas !== ($_POST['extraSchedule'] ?? 'no'); // a refused Save changed nothing, and the reload would hide why
+    $abNotSaved    = ABSettings::storeForm($_POST);
+    $abTabsChanged = $abNotSaved === null && $abExtraWas !== ($_POST['extraSchedule'] ?? 'no'); // a refused Save changed nothing, and the reload would hide why
 }
 
 $abSettings = new ABSettings();
@@ -251,7 +261,10 @@ HTML;
 
 }
 
-if (($abSaved ?? null) === false) {
+if (($abNotSaved ?? null) === ABSettings::NOT_WRITTEN) {
+    echo '<p class="ab-warn">' . ABSettings::NOT_WRITTEN_TEXT . '</p>';
+}
+if (($abNotSaved ?? null) === ABSettings::NOT_READ) {
     echo '<p class="ab-warn">Not saved: config.json on the flash drive could not be read, so saving would have lost the settings kept in it, such as the Extra schedule tab\'s. Check the flash drive, then Save again.</p>';
 }
 if (($abUnreadable = ABSettings::unreadableWarning()) !== '') {
