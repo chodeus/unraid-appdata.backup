@@ -221,7 +221,8 @@ class ABSettings {
     private const READERS = ['defaults' => 'defaultsRow', 'allowedSources' => 'pathLines', 'includeFiles' => 'pathLines', 'globalExclusions' => 'pathLines',
         'extraIncludeFiles' => 'pathLines', 'extraGlobalExclusions' => 'pathLines', 'containerOrderMode' => 'orderMode', 'containerOrder' => 'order',
         'extraContainerOrder' => 'order', 'containerGroupOrder' => 'groupOrder', 'extraContainers' => 'containerNames', 'containerSettings' => 'containerRows',
-        'extraContainerSettings' => 'containerRows', 'backupMethod' => 'backupMethod', 'extraBackupMethod' => 'backupMethod'];
+        'extraContainerSettings' => 'containerRows', 'backupMethod' => 'backupMethod', 'extraBackupMethod' => 'backupMethod',
+        'backupFrequency' => 'frequency', 'extraFrequency' => 'frequency'];
 
     /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention value that is neither text nor an int is first turned into its JSON text */
     private function load(string $key, $value) {
@@ -247,6 +248,11 @@ class ABSettings {
     /** A backup type this version runs, or for the extra schedule '' (the Settings tab's): doBackupMethod() backs up no container for any other */
     private static function backupMethod($value, string $key) {
         return in_array($value, ['stopAll', 'oneAfterTheOther', 'flashOnly', ...($key === 'extraBackupMethod' ? [''] : [])], true) ? $value : null;
+    }
+
+    /** A frequency both tabs offer: cronTime() writes no line for any other, so checkCron() would drop the saved schedule */
+    private static function frequency($value) {
+        return in_array($value, ['disabled', 'daily', 'weekly', 'monthly', 'custom'], true) ? $value : null;
     }
 
     /** 'unraid' (the Docker tab's start order), or 'custom' for any other value */
