@@ -72,8 +72,8 @@ class ABSettings {
     /** The backup type a fresh install gets, and the one a schedule copying a Flash only Settings tab backs its containers up with */
     const DEFAULT_BACKUP_METHOD = 'oneAfterTheOther';
 
-    /** 'stopAll', 'oneAfterTheOther', or 'flashOnly' (no container is stopped or backed up, see flashOnly()) */
-    public string|null $backupMethod = self::DEFAULT_BACKUP_METHOD;
+    /** 'stopAll', 'oneAfterTheOther', or 'flashOnly' (no container is stopped or backed up, see flashOnly()); other saved text is named (backupMethod()) */
+    public string $backupMethod = self::DEFAULT_BACKUP_METHOD;
     public string $snapshotMode = 'no';
     /** 'age' (deleteBackupsOlderThan, keepMinBackups) or 'gfs' (ABRetention::PERIODS); other saved text turns retention off (ABRetention::unreadable) */
     public string $retentionMode = 'age';
@@ -221,7 +221,7 @@ class ABSettings {
     private const READERS = ['defaults' => 'defaultsRow', 'allowedSources' => 'pathLines', 'includeFiles' => 'pathLines', 'globalExclusions' => 'pathLines',
         'extraIncludeFiles' => 'pathLines', 'extraGlobalExclusions' => 'pathLines', 'containerOrderMode' => 'orderMode', 'containerOrder' => 'order',
         'extraContainerOrder' => 'order', 'containerGroupOrder' => 'groupOrder', 'extraContainers' => 'containerNames', 'containerSettings' => 'containerRows',
-        'extraContainerSettings' => 'containerRows'];
+        'extraContainerSettings' => 'containerRows', 'backupMethod' => 'backupMethod', 'extraBackupMethod' => 'backupMethod'];
 
     /** Sets one saved setting, with PHP's own casts (true to "1"): a value it cannot take keeps the default and is named in $unreadable. A retention value that is neither text nor an int is first turned into its JSON text */
     private function load(string $key, $value) {
@@ -242,6 +242,11 @@ class ABSettings {
     /** The saved defaults over the built-in ones, read like a container row (row()); null when they are not a map */
     private static function defaultsRow($value) {
         return is_array($value) ? array_merge(get_class_vars(self::class)['defaults'], self::row('defaults', $value)) : null;
+    }
+
+    /** A backup type this version runs, or for the extra schedule '' (the Settings tab's): doBackupMethod() backs up no container for any other */
+    private static function backupMethod($value, string $key) {
+        return in_array($value, ['stopAll', 'oneAfterTheOther', 'flashOnly', ...($key === 'extraBackupMethod' ? [''] : [])], true) ? $value : null;
     }
 
     /** 'unraid' (the Docker tab's start order), or 'custom' for any other value */
