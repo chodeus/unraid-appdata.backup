@@ -63,7 +63,8 @@ if (!file_exists(ABSettings::getConfigPath())) {
 
 $abSettings = new ABSettings();
 if (($abUnreadable = ABSettings::unreadableWarning()) !== '') {
-    ABHelper::backupLog($abUnreadable, ABHelper::LOGLEVEL_ERR); // a default may leave things out of the set, so retention keeps every set too (ABRetention::off)
+    ABHelper::backupLog($abUnreadable, ABHelper::LOGLEVEL_ERR);
+    ABHelper::$errorOccured = true; // a default may leave things out of the set: it is marked failed, and retention does not run
 }
 
 // Retention never deletes either schedule's destination, even one picked inside the other and named like a set

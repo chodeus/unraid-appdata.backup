@@ -351,7 +351,7 @@ class ABSettings {
             return false;
         }
         $config = json_decode($raw, true);
-        return is_array($config) && !($config && array_is_list($config)) ? $config : null;
+        return is_array($config) && str_starts_with(ltrim($raw), '{') ? $config : null; // a list decodes to an array too, [] as {} does
     }
 
     public static function getConfigPath() {

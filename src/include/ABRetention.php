@@ -50,9 +50,6 @@ class ABRetention {
         if (($unreadable = self::unreadable($settings)) !== '') {
             return $unreadable;
         }
-        if (ABSettings::$unreadable) { // the set may lack what a default left out
-            return 'config.json holds settings this version cannot read';
-        }
         $gfs   = $settings->retentionMode === 'gfs';
         $extra = $settings->schedule === 'extra';
         if ($gfs) {
