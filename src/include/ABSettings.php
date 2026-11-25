@@ -288,7 +288,8 @@ class ABSettings {
 
     /** A container row, or the defaults, with its exclude as a list of paths (one it cannot read is empty) and any other setting not held as text or a number left out, so the default applies; each that held a value is named in $unreadable */
     private static function row(string $item, array $row) {
-        $paths = self::pathLines($row['exclude'] ?? '');
+        $exclude = $row['exclude'] ?? '';
+        $paths   = self::pathLines(empty($exclude) && !is_string($exclude) ? '' : $exclude); // an empty one held no setting to lose, as below
         if ($paths === null) {
             self::$unreadable[] = "$item exclude";
         }
@@ -305,16 +306,18 @@ class ABSettings {
         return $row;
     }
 
-    /** One path per non-empty line of the text, or of a list's texts, without its trailing slash; null for a list holding anything else */
+    /** One path per non-empty line of the text, or of a list's texts, without its trailing slash; null for anything else, or a list holding anything else */
     private static function pathLines($value) {
         if (is_array($value)) {
             if (array_filter($value, fn($line) => !is_string($line))) {
                 return null;
             }
             $value = implode("\n", $value);
+        } elseif (!is_string($value)) {
+            return null;
         }
         $paths = [];
-        foreach (preg_split('/\r?\n|\r/', (string)$value) as $path) {
+        foreach (preg_split('/\r?\n|\r/', $value) as $path) {
             if (trim($path) === '') {
                 continue; // Skip empty lines
             }
