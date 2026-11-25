@@ -452,9 +452,10 @@ class ABSettings {
     /** Writes config.json through a temporary file, so a failed write leaves the old one; false when it could not */
     public static function store(array $config) {
         $sFile = self::getConfigPath();
+        $tmp   = "$sFile." . getmypid() . '.tmp'; // its own per process: a Save and a run's migration may write at once
         $json  = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if ($json === false || @file_put_contents("$sFile.tmp", $json) !== strlen($json) || !@rename("$sFile.tmp", $sFile)) {
-            @unlink("$sFile.tmp");
+        if ($json === false || @file_put_contents($tmp, $json) !== strlen($json) || !@rename($tmp, $sFile)) {
+            @unlink($tmp);
             return false;
         }
         return true;
