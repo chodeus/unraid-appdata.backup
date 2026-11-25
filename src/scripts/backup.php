@@ -62,6 +62,9 @@ if (!file_exists(ABSettings::getConfigPath())) {
 }
 
 $abSettings = new ABSettings();
+if (in_array('extra', $runArgs, true)) {
+    ABHelper::$targetLogLevel = $abSettings->forSchedule('extra')->notification; // the errors below notify at this run's level; loading the settings set the Settings tab's
+}
 if (($abUnreadable = ABSettings::unreadableWarning()) !== '') {
     ABHelper::backupLog($abUnreadable, ABHelper::LOGLEVEL_ERR);
     ABHelper::$errorOccured = true; // a default may leave things out of the set: it is marked failed, and retention does not run
@@ -87,7 +90,6 @@ if (in_array('extra', $runArgs, true)) {
     ABHelper::backupLog(ABHelper::dump('Extra schedule settings', $extraSummary['settings']), ABHelper::LOGLEVEL_DEBUG);
     ABHelper::backupLog(ABHelper::dump("Extra schedule's own container settings", $extraSummary['overrides']), ABHelper::LOGLEVEL_DEBUG);
     $abSettings = $abSettings->forSchedule('extra');
-    ABHelper::$targetLogLevel = $abSettings->notification; // this run's own notification level; loading the settings set the Settings tab's
 }
 
 if (empty($abSettings->destination)) {

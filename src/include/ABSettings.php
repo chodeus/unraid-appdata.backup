@@ -257,9 +257,9 @@ class ABSettings {
         return is_array($value) ? array_merge(get_class_vars(self::class)['defaults'], self::row('defaults', $value)) : null;
     }
 
-    /** A backup type this version runs, or for the extra schedule '' (the Settings tab's): doBackupMethod() backs up no container for any other */
+    /** A backup type its tab offers: the extra schedule's has no Flash only, but '' (the Settings tab's, which may be Flash only); doBackupMethod() backs up no container for any other */
     private static function backupMethod($value, string $key) {
-        return in_array($value, ['stopAll', 'oneAfterTheOther', 'flashOnly', ...($key === 'extraBackupMethod' ? [''] : [])], true) ? $value : null;
+        return in_array($value, ['stopAll', 'oneAfterTheOther', ...($key === 'extraBackupMethod' ? [''] : ['flashOnly'])], true) ? $value : null;
     }
 
     /** A frequency both tabs offer: cronTime() writes no line for any other, so checkCron() would drop the saved schedule */
@@ -409,7 +409,7 @@ class ABSettings {
                     return; // false never counts up, so the loop below would not end; the constructor names it
                 }
                 for ($curMigrationStep = $config['settingsVersion']; $curMigrationStep < ABSettings::$settingsVersion; $curMigrationStep++) {
-                    exec('logger -t "' . self::$appName . '" Found migrations! Running Migration for version ' . $curMigrationStep . ' to ' . (ABSettings::$settingsVersion));
+                    ABHelper::logger('Found migrations! Running Migration for version ' . $curMigrationStep . ' to ' . ABSettings::$settingsVersion);
 
                     $migrationSuccess = false;
                     switch ($curMigrationStep) {
@@ -437,12 +437,12 @@ class ABSettings {
                     if ($migrationSuccess) {
                         $config['settingsVersion']++;
                         if (!self::store($config)) {
-                            exec('logger -t "' . self::$appName . '" ERROR: Migration could not be written to config.json');
+                            ABHelper::logger('ERROR: Migration could not be written to config.json');
                             return; // the next load runs it again
                         }
-                        exec('logger -t "' . self::$appName . '" Migration was successful!');
+                        ABHelper::logger('Migration was successful!');
                     } else {
-                        exec('logger -t "' . self::$appName . '" ERROR: Migration was NOT successful!');
+                        ABHelper::logger('ERROR: Migration was NOT successful!');
                     }
                 }
             }
@@ -451,10 +451,14 @@ class ABSettings {
 
     /** Writes config.json through a temporary file, so a failed write leaves the old one; false when it could not */
     public static function store(array $config) {
-        $sFile = self::getConfigPath();
-        $tmp   = "$sFile." . getmypid() . '.tmp'; // its own per process: a Save and a run's migration may write at once
-        $json  = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-        if ($json === false || @file_put_contents($tmp, $json) !== strlen($json) || !@rename($tmp, $sFile)) {
+        $json = json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        return $json !== false && self::replaceFile(self::getConfigPath(), $json);
+    }
+
+    /** Replaces $path with $text through a temporary file beside it, so a failed or short write leaves the old file; false when it could not */
+    private static function replaceFile(string $path, string $text) {
+        $tmp = "$path." . getmypid() . '.tmp'; // its own per process: two writers (a Save, a run's migration, checkCron) may replace one file at once
+        if (@file_put_contents($tmp, $text) !== strlen($text) || !@rename($tmp, $path)) {
             @unlink($tmp);
             return false;
         }
@@ -854,13 +858,11 @@ class ABSettings {
         };
     }
 
-    /** The saved cron lines of one schedule when the last load could not read one of its settings ($fields, a pattern) or the whole file: a default could stop or move it. null when the cron file cannot be read */
-    private static function keptCronLines(string $fields, bool $extra) {
-        $file = self::$pluginDir . '/' . self::$cronFile;
-        if (!self::unread($fields) || !is_file($file)) {
+    /** The saved cron lines of one schedule when the last load could not read one of its settings ($fields, a pattern) or the whole file: a default could stop or move it. $lines is the cron file's ([] for none, false when it cannot be read, which gives null) */
+    private static function keptCronLines(string $fields, bool $extra, $lines) {
+        if (!self::unread($fields)) {
             return [];
         }
-        $lines = file($file, FILE_IGNORE_NEW_LINES);
         return $lines === false ? null : array_values(array_filter($lines, fn($line) => str_contains($line, '/scripts/backup.php') && str_contains($line, ' extra ') === $extra)); // older versions wrote the main line without 'scheduled'
     }
 
@@ -868,10 +870,12 @@ class ABSettings {
      * @return array
      */
     public function checkCron() {
-        $lines = [];
+        $cronPath = self::$pluginDir . '/' . self::$cronFile;
+        $saved    = is_file($cronPath) ? @file($cronPath, FILE_IGNORE_NEW_LINES) : []; // read once, so both schedules keep lines of the same file
+        $lines    = [];
         // 'scheduled' makes a run wait for a running job instead of being refused
         foreach (['backupFrequency' => ['scheduled', '/^backupFrequency/'], 'extraFrequency' => ['scheduled extra', '/^(extraFrequency|extraSchedule$)/']] as $prefix => [$args, $fields]) {
-            $kept = self::keptCronLines($fields, $prefix === 'extraFrequency');
+            $kept = self::keptCronLines($fields, $prefix === 'extraFrequency', $saved);
             if ($kept === null) {
                 return [1, ['The cron file ' . self::$pluginDir . '/' . self::$cronFile . ' could not be read, so the schedules were left as they were']];
             }
@@ -885,8 +889,7 @@ class ABSettings {
             }
         }
 
-        $cronPath = self::$pluginDir . '/' . self::$cronFile;
-        $written  = $lines ? @file_put_contents($cronPath, '# Appdata.Backup cron settings' . PHP_EOL . implode(PHP_EOL, $lines) . PHP_EOL) !== false : !file_exists($cronPath) || @unlink($cronPath);
+        $written = $lines ? self::replaceFile($cronPath, '# Appdata.Backup cron settings' . PHP_EOL . implode(PHP_EOL, $lines) . PHP_EOL) : !file_exists($cronPath) || @unlink($cronPath);
         if (!$written) {
             return [1, ["The cron file $cronPath could not be written, so the schedules may not match these settings"]];
         }
