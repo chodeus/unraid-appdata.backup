@@ -17,13 +17,14 @@ class ABCron {
     public static function fields() {
         return array_map(fn($line) => array_values(array_filter(array_keys(self::LABELS), fn($field) => str_contains($line, '{' . $field . '}'))), self::LINES);
     }
-    /** The Custom Cron Entry the tabs accept, for preg_match and their RegExp alike, as dcron 4.5 runs it: five fields in range (names, lower case or capitalised, only for month and day of week; a step only after * or a range), or an @ word (@hourly to @yearly need an ID=); then ID=, AFTER= and FREQ= (five fields with an ID= only) */
+    /** The Custom Cron Entry the tabs accept, for preg_match and their RegExp alike, as dcron 4.5 runs it: five fields in range (names, lower case or capitalised, only for month and day of week; a step only after * or a range), or an @ word (@hourly to @yearly need an ID=); then ID=, AFTER= and FREQ= once each (FREQ= above 0, on five fields with an ID= only) */
     public static function custom() {
-        $item   = fn($value, $not = '') => "$not((\\*|($value)-($value))(/0*[1-9][0-9]*)?|($value))";
+        $count  = '0*[1-9][0-9]*'; // above 0, as dcron's strtol reads it: 05 too
+        $item   = fn($value, $not = '') => "$not((\\*|($value)-($value))(/$count)?|($value))";
         $fields = [['0?[0-9]|[1-5][0-9]'], ['0?[0-9]|1[0-9]|2[0-3]'], ['0?[1-9]|[12][0-9]|3[01]'], ['0?[1-9]|1[0-2]|[jJ]an|[fF]eb|[mM]ar|[aA]pr|[mM]ay|[jJ]un|[jJ]ul|[aA]ug|[sS]ep|[oO]ct|[nN]ov|[dD]ec'],
             ['0?[0-7]|[sS]un|[mM]on|[tT]ue|[wW]ed|[tT]hu|[fF]ri|[sS]at', '(?!(0?0|[sS]un)-0?7(?![0-9]))']]; // dcron runs 0-7 and sun-7 on Sunday only
         $time   = implode('[ \t]+', array_map(fn($field) => $item(...$field) . '(,' . $item(...$field) . ')*', $fields));
-        return '^(?=.*[ \t]ID=\S|(?!.*[ \t]FREQ=))(@(reboot|noauto|(hourly|daily|weekly|monthly|yearly)(?=.*[ \t]ID=\S))(?!.*[ \t]FREQ=)|' . $time . ')([ \t]+(ID=\S+|AFTER=\S+|FREQ=[0-9]+[dhm](/[0-9]+[dhm])?))*$';
+        return '^(?!(.*[ \t]ID=){2}|(.*[ \t]AFTER=){2}|(.*[ \t]FREQ=){2})(?=.*[ \t]ID=\S|(?!.*[ \t]FREQ=))(@(reboot|noauto|(hourly|daily|weekly|monthly|yearly)(?=.*[ \t]ID=\S))(?!.*[ \t]FREQ=)|' . $time . ')([ \t]+(ID=\S+|AFTER=\S+|FREQ=' . $count . '[dhmw](/' . $count . '[dhmw])?))*$';
     }
 
     /** Lists in $badTimes each time field a schedule's frequency writes (as time() does) that accepts() rejects: write() then keeps that schedule's cron line */
