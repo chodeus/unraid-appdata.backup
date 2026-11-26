@@ -239,6 +239,9 @@ class ABSettings {
         if (in_array(str_starts_with($key, 'extra') ? lcfirst(substr($key, 5)) : $key, self::RETENTION, true) && !is_string($value) && !is_int($value)) {
             $value = json_encode($value) ?: var_export($value, true); // a default, or PHP's cast of 1.5 or true to 1, could delete sets; ABRetention::unreadable() names "1.5", "true", "[]" or INF (1e400, which has no JSON) and keeps every set
         }
+        if (preg_match('/^(backup|extra)Frequency[A-Z]/', $key) && (is_bool($value) || is_float($value))) {
+            $value = var_export($value, true); // PHP would cast false or 2.5 to the time 0 or 2; ABCron::check() names the text instead
+        }
         if ($key === 'settingsVersion') {
             if (self::isVersion($value)) {
                 $this::$settingsVersion = $value;
