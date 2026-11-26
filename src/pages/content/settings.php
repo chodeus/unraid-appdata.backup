@@ -1153,7 +1153,7 @@ HTML;
     /** Refuses Save while a schedule field holds a time the server would not accept (ABCron::accepts), and :invalid shows it red: a Custom Cron Entry as typed, an Hour or Minute other than digits (the boxes check their range), a saved list value the list does not offer until another is picked */
     function abCronCheck() {
         if (this.type === 'text') {
-            this.setCustomValidity(abCronCustom.test(this.value.replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '')) ? '' : 'Not an entry this page accepts: five fields in range, such as 0 2 * * 1-5 (for every day, * rather than 0-7), or @reboot; @daily and the like need ID=name after them'); // trims what PHP's trim() does, not a pasted no-break space
+            this.setCustomValidity(abCronCustom.test(this.value.replace(/^[ \t\n\r\0\x0B]+|[ \t\n\r\0\x0B]+$/g, '').replace(/[^\x00-\x7f]/g, 'x')) ? '' : 'Not an entry this page accepts: five fields in range, such as 0 2 * * 1-5 (for every day, * rather than 0-7), or @reboot; @daily and the like need ID=name after them'); // as ABCron::accepts() reads it: trim() leaves a no-break space, and preg_match (no /u) reads no non-ASCII byte as a space, where JS \s takes U+00A0
         } else if (this.type === 'number') {
             this.setCustomValidity(/^[0-9]*$/.test(this.value) ? '' : 'A whole number, such as 5'); // the box itself takes 5.0 and 1e1
         } else if (this.tagName === 'SELECT') {
