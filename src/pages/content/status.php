@@ -29,7 +29,7 @@ if ($summary['recorded']) {
         . ' &middot; as of the last backup run';
 }
 $rows['Next scheduled run'] = ABCron::held(false) ? 'Unknown: see the warning on the Settings tab' : ($summary['next'] ? $summary['next']->format('D d.m.Y H:i') : ($abSettings->backupFrequency === 'custom' ? 'Custom: ' . htmlspecialchars($abSettings->backupFrequencyCustom) : 'Not scheduled'));
-if ($abSettings->extraSchedule === 'yes') {
+if ($abSettings->extraSchedule === 'yes' || ABCron::held(true)) { // an unreadable Use an extra schedule? keeps its cron line too
     $extraSummary = ABStatus::summary($abSettings->forSchedule('extra'));
     $rows['Extra schedule'] = (ABCron::held(true) ? 'Next unknown: see the warning on the Settings tab' : ($extraSummary['next'] ? 'Next ' . $extraSummary['next']->format('D d.m.Y H:i') : ($abSettings->extraFrequency === 'custom' ? 'Custom: ' . htmlspecialchars($abSettings->extraFrequencyCustom) : 'Not scheduled')))
         . ' &middot; ' . ($extraSummary['recorded'] ? count($extraSummary['ok']) . ' good' . ($extraSummary['ok'] ? ', newest ' . $date($extraSummary['ok'][0]) : '') : 'sets shown after its first run');
